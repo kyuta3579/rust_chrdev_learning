@@ -6,9 +6,11 @@ use core::pin::Pin;
 use kernel::prelude::*;
 use kernel::{
     chrdev, 
-    cstr, 
-    file_operations::{File, FileOperations},
-    user_ptr::{UserSlicePtrReader, UserSlicePtrWriter},
+    c_str,
+    str::CStr, 
+    file_operations::FileOperations,
+    file::File,
+    io_buffer::{IoBufferReader, IoBufferWriter},
 };
 
 module! {
@@ -27,56 +29,49 @@ struct RustFile;
 impl FileOperations for RustFile {
     kernel::declare_file_operations!(read, write);
 
-    fn read(&self, _file: &File, _data: &mut UserSlicePtrWriter, _offset: u64) -> KernelResult<usize> {
+    fn read<T: IoBufferWriter>(_this: &Self, _file: &File, _data: &mut T, _offset: u64,) -> Result<usize> {
         pr_info!("Rust character device: read\n");
-        let s1: [u8;3] = ['a' as u8, 'b' as u8, 'c' as u8];
+        let ret_str = c_str!("read_fp: testing");
 
-        match _data.write_slice(&s1) {
+        match _data.write_slice(ret_str.as_bytes()) {
             Ok(_) => 
             {
                 pr_info!("write data\n");
-                Ok(1)
+                Ok(0)
             },
             Err(ret) => 
             {
-                pr_info!("read Error\n");
+                pr_info!("write Error\n");
                 Err(ret)
             }
         }
     }
 
-    
-    fn write(&self, _data: &mut UserSlicePtrReader, _offset: u64) -> KernelResult<usize> {
-        let mut s1: [u8;8] = [0; 8];
-        let mut s2: [char;8] = [0 as char;8];
-        let mut counter = 0;
+    fn write<T: IoBufferReader>(_this: &Self, _file: &File, _data: &mut T, _offset: u64,) -> Result<usize> {
+        let mut input_str: [u8;8] = [0; 8];
 
-        _data.read_slice(&mut s1)?;
-        for c in s1.iter() {
-            s2[counter] = *c as char;
-            counter += 1;
-        }
+        _data.read_slice(&mut input_str)?;
+ 
+        let conv_str = CStr::from_bytes_with_nul_unwrap(&input_str);
 
-        let string: String = s2.iter().collect::<String>();
+        pr_info!("input: {}\n", *conv_str.as_char_ptr());
 
-        pr_info!("in: {}", &string);
-
-        pr_info!("Rust character device sample (write)\n");
         Ok(0)
     }
 }
 
 struct RustChrdev {
-    _dev: Pin<Box<chrdev::Registration<1>>>,
+    _dev: Pin<Box<chrdev::Registration<2>>>,
 }
 
 impl KernelModule for RustChrdev {
-    fn init() -> KernelResult<Self> {
+    fn init() -> Result<Self> {
         pr_info!("Rust character device sample (init)\n");
 
         let mut chrdev_reg =
-            chrdev::Registration::new_pinned(cstr!("rust_chrdev_learning"), 0, &THIS_MODULE)?;
+            chrdev::Registration::new_pinned(c_str!("rust_chrdev_learning"), 0, &THIS_MODULE)?;
 
+        chrdev_reg.as_mut().register::<RustFile>()?;
         chrdev_reg.as_mut().register::<RustFile>()?;
 
         Ok(RustChrdev { _dev: chrdev_reg })
